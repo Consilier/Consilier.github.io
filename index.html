@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="ro">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Hărțile mele</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🗺️</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#EDF1EE; --panel:#FFFFFF; --ink:#16303F; --muted:#5B6E78;
+  --line:#CFD9D4; --accent:#1F6B52; --accent-ink:#FFFFFF; --warn:#9A5B12;
+  box-sizing:border-box;
+  padding-top:env(safe-area-inset-top,0px);
+  padding-bottom:env(safe-area-inset-bottom,0px);
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --bg:#0F1A1F; --panel:#172630; --ink:#E4ECEA; --muted:#93A6AE;
+    --line:#2A3C46; --accent:#4FB08A; --accent-ink:#0B1A14; --warn:#E0A55C;
+  }
+}
+*,*::before,*::after{box-sizing:inherit}
+body{
+  margin:0; background:var(--bg); color:var(--ink);
+  font-family:"Source Sans 3",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  font-size:17px; line-height:1.45;
+  background-image:repeating-radial-gradient(circle at 85% -10%, transparent 0 38px, color-mix(in srgb,var(--line) 55%,transparent) 38px 39px);
+  background-attachment:fixed;
+}
+main{max-width:680px; margin:0 auto; padding:28px 18px 48px}
+header{display:flex; align-items:flex-end; justify-content:space-between; gap:12px; margin-bottom:18px}
+h1{font-size:2.1rem; line-height:1.1; margin:0; font-weight:700; letter-spacing:-.01em}
+.sub{color:var(--muted); margin:4px 0 0; font-size:.95rem}
+#refresh{
+  background:var(--panel); color:var(--ink); border:1px solid var(--line); border-radius:10px;
+  padding:9px 14px; font:inherit; font-size:.95rem; cursor:pointer; flex:none;
+}
+#refresh[disabled]{opacity:.6; cursor:default}
+#q{
+  width:100%; padding:11px 14px; font:inherit; color:var(--ink);
+  background:var(--panel); border:1px solid var(--line); border-radius:10px; margin-bottom:14px;
+}
+ul{list-style:none; margin:0; padding:0; border-top:1px solid var(--line)}
+li{border-bottom:1px solid var(--line)}
+li a{display:block; padding:13px 4px; color:inherit; text-decoration:none}
+li a:active,li a:hover{background:color-mix(in srgb,var(--accent) 9%,transparent)}
+.name{font-weight:600; font-size:1.08rem; display:block}
+.meta{color:var(--muted); font-size:.85rem; display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.desc{color:var(--muted); font-size:.92rem; display:block; margin-top:2px}
+.msg{padding:18px 4px; color:var(--muted)}
+.note{margin-top:14px; font-size:.9rem; color:var(--warn); min-height:1.2em}
+:focus-visible{outline:3px solid var(--accent); outline-offset:2px}
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <div>
+      <h1>Hărțile mele</h1>
+      <p class="sub" id="sub">Se caută hărțile publicate…</p>
+    </div>
+    <button id="refresh" type="button">Reîmprospătează</button>
+  </header>
+  <input id="q" type="search" placeholder="Caută o hartă" hidden>
+  <ul id="list"><li class="msg">Se încarcă…</li></ul>
+  <p class="note" id="note"></p>
+</main>
+<script>
+(function(){
+  // Utilizatorul GitHub se deduce din adresă (utilizator.github.io).
+  // Pentru test local: index.html?u=utilizator
+  var host = location.hostname.toLowerCase();
+  var USER = host.endsWith('.github.io') ? host.split('.')[0]
+           : (new URLSearchParams(location.search).get('u') || '');
+  var BASE = 'https://' + USER + '.github.io/';
+  var API = 'https://api.github.com';
+  var CACHE_KEY = 'catalog-harti-v1';
+  var MAX_AGE = 10 * 60 * 1000;          // 10 minute
+  var SKIP_DIR = /^(lib|libs|assets|vendor|js|css|static|node_modules|fonts|img|images|icons|data|tiles|dist|build)$/i;
+
+  var items = [], filter = '';
+  var $ = function(id){ return document.getElementById(id); };
+
+  function esc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+  function fmtDate(iso){
+    try { return new Date(iso).toLocaleDateString('ro-RO', {day:'numeric', month:'short', year:'numeric'}); }
+    catch(e){ return ''; }
+  }
+
+  function render(){
+    var f = filter.toLowerCase();
+    var shown = items.filter(function(it){
+      return !f || (it.title + ' ' + it.repo + ' ' + it.path + ' ' + (it.desc||'')).toLowerCase().indexOf(f) > -1;
+    });
+    $('q').hidden = items.length < 6;
+    $('sub').textContent = items.length
+      ? items.length + (items.length === 1 ? ' hartă publicată' : ' hărți publicate')
+      : 'Nicio hartă găsită încă';
+    if (!shown.length){
+      $('list').innerHTML = '<li class="msg">' + (items.length
+        ? 'Nicio hartă nu se potrivește căutării.'
+        : 'Nu am găsit repo-uri cu GitHub Pages activat. Publică o hartă și apasă Reîmprospătează.') + '</li>';
+      return;
+    }
+    $('list').innerHTML = shown.map(function(it){
+      return '<li><a href="' + esc(it.url) + '">'
+        + '<span class="name">' + esc(it.title) + '</span>'
+        + (it.desc ? '<span class="desc">' + esc(it.desc) + '</span>' : '')
+        + '<span class="meta">' + esc(it.repo + (it.path ? ' / ' + it.path : '')) + ' · actualizat ' + esc(fmtDate(it.updated)) + '</span>'
+        + '</a></li>';
+    }).join('');
+  }
+
+  function api(path){
+    return fetch(API + path, {headers:{'Accept':'application/vnd.github+json'}}).then(function(r){
+      if (r.status === 403 || r.status === 429){ var e = new Error('limita'); e.rate = true; throw e; }
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.json();
+    });
+  }
+
+  async function pool(list, n, fn){
+    var i = 0;
+    async function worker(){ while (i < list.length){ var k = i++; await fn(list[k], k); } }
+    var ws = []; for (var j = 0; j < Math.min(n, list.length); j++) ws.push(worker());
+    await Promise.all(ws);
+  }
+
+  async function listRepos(){
+    var all = [];
+    for (var page = 1; page <= 5; page++){
+      var batch = await api('/users/' + USER + '/repos?per_page=100&sort=pushed&page=' + page);
+      all = all.concat(batch);
+      if (batch.length < 100) break;
+    }
+    var self = (USER + '.github.io').toLowerCase();
+    return all.filter(function(r){ return r.has_pages && r.name.toLowerCase() !== self; });
+  }
+
+  // Găsește toate fișierele index.html dintr-un repo = toate hărțile lui
+  function mapsInTree(tree){
+    var paths = tree.filter(function(t){ return t.type === 'blob' && /(^|\/)index\.html$/i.test(t.path); })
+                    .map(function(t){ return t.path; });
+    var root = '';
+    if (paths.indexOf('index.html') < 0 && paths.indexOf('docs/index.html') > -1) root = 'docs/';
+    var out = [];
+    paths.forEach(function(p){
+      if (root && p.indexOf(root) !== 0) return;
+      var rel = p.slice(root.length).replace(/index\.html$/i, '').replace(/\/$/, '');
+      var segs = rel ? rel.split('/') : [];
+      if (segs.length > 3) return;
+      if (segs.some(function(s){ return SKIP_DIR.test(s) || s.charAt(0) === '.' || s.charAt(0) === '_'; })) return;
+      out.push(rel);
+    });
+    return out;
+  }
+
+  async function readTitle(url){
+    try {
+      var r = await fetch(url, {cache:'no-cache'});
+      if (!r.ok) return null;
+      var html = await r.text();
+      var m = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+      if (!m) return null;
+      var d = new DOMParser().parseFromString('<p>' + m[1] + '</p>', 'text/html');
+      return d.body.textContent.trim() || null;
+    } catch(e){ return null; }
+  }
+
+  async function refresh(){
+    if (!USER){ $('note').textContent = 'Deschide pagina de la adresa utilizator.github.io.'; return; }
+    $('refresh').disabled = true; $('refresh').textContent = 'Se caută…'; $('note').textContent = '';
+    var rateHit = false;
+    try {
+      var repos = await listRepos();
+      var found = [];
+      await pool(repos, 4, async function(r){
+        var rels = null;
+        if (!rateHit){
+          try {
+            var t = await api('/repos/' + USER + '/' + r.name + '/git/trees/' + encodeURIComponent(r.default_branch) + '?recursive=1');
+            rels = mapsInTree(t.tree || []);
+          } catch(e){ if (e.rate) rateHit = true; }
+        }
+        if (!rels || !rels.length) rels = [''];   // măcar pagina principală a repo-ului
+        rels.forEach(function(rel){
+          found.push({
+            repo: r.name, path: rel, desc: rel ? '' : (r.description || ''),
+            url: BASE + r.name + '/' + (rel ? rel + '/' : ''),
+            updated: r.pushed_at, title: rel ? rel.split('/').pop().replace(/[-_]+/g,' ') : r.name.replace(/[-_]+/g,' ')
+          });
+        });
+      });
+      await pool(found, 6, async function(it){
+        var t = await readTitle(it.url);
+        if (t) it.title = t;
+      });
+      found.sort(function(a,b){ return (b.updated||'').localeCompare(a.updated||'') || a.title.localeCompare(b.title,'ro'); });
+      items = found;
+      try { localStorage.setItem(CACHE_KEY, JSON.stringify({t:Date.now(), user:USER, items:items})); } catch(e){}
+      render();
+      if (rateHit) $('note').textContent = 'GitHub a limitat temporar căutarea; unele subfoldere pot lipsi. Încearcă din nou peste o oră.';
+    } catch(e){
+      $('note').textContent = e.rate
+        ? 'GitHub permite un număr limitat de căutări pe oră. Afișez ultima listă salvată; încearcă din nou mai târziu.'
+        : 'Nu am putut citi lista de la GitHub (' + e.message + '). Afișez ultima listă salvată.';
+      if (!items.length) render();
+    } finally {
+      $('refresh').disabled = false; $('refresh').textContent = 'Reîmprospătează';
+    }
+  }
+
+  $('q').addEventListener('input', function(){ filter = this.value; render(); });
+  $('refresh').addEventListener('click', refresh);
+
+  var cached = null;
+  try { cached = JSON.parse(localStorage.getItem(CACHE_KEY) || 'null'); } catch(e){}
+  if (cached && cached.user === USER && Array.isArray(cached.items)){
+    items = cached.items; render();
+    if (Date.now() - cached.t > MAX_AGE) refresh();
+  } else {
+    refresh();
+  }
+})();
+</script>
+</body>
+</html>
